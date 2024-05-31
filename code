@@ -1,0 +1,326 @@
+#include <EEPROM.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+
+#include <Keypad.h>
+const byte ROWS = 4; //four rows
+const byte COLS = 4; //four columns
+//define the cymbols on the buttons of the keypads
+char hexaKeys[ROWS][COLS] = {
+  {'1', '2', '3', 'A'},
+  {'4', '5', '6', 'B'},
+  {'7', '8', '9', 'C'},
+  {'*', '0', '#', 'D'}
+};
+byte rowPins[ROWS] = {47, 45, 43, 41}; //connect to the row pinouts of the keypad
+byte colPins[COLS] = {39, 37, 35, 33}; //connect to the column pinouts of the keypad
+
+//initialize an instance of class NewKeypad
+Keypad customKeypad = Keypad( makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
+
+
+
+#define buz 13
+
+// Motor pins
+const int motor1Pin1 = 4; // Left motor pin 1
+const int motor1Pin2 = 5; // Left motor pin 2
+const int motor2Pin1 = 3; // Right motor pin 1
+const int motor2Pin2 = 2; // Right motor pin 2
+
+// Sensor pins
+const int sensorPin1 = 6;
+const int sensorPin2 = 7;
+const int sensorPin3 = 8;
+const int sensorPin4 = 10;
+const int sensorPin5 = 9;
+
+// Constants for motor speed control
+const int baseSpeed = 150; // Base speed for both motors
+const int turnSpeed = 100; // Speed reduction for turning
+
+
+
+const int NUM_TAG_LOCATIONS = 5; // Number of locations in EEPROM to store tags
+const int TAG_SIZE = 12; // Size of RFID tag (assuming it's 12 digits)
+const int CARD_NUMBER_SIZE = 1; // Size of the entered card number
+String tag;
+// Function to write RFID tag to EEPROM based on card number
+void writeRFIDTagToEEPROM(int cardNumber, String tag) {
+  // Convert card number to location index
+  int index = (cardNumber - 1) * TAG_SIZE;
+
+  // Write RFID tag to EEPROM
+  for (int i = 0; i < TAG_SIZE; i++) {
+    EEPROM.write(index + i, tag[i]);
+  }
+}
+
+// Function to store RFID tag based on card number
+void store_card()
+{
+  // Prompt user to enter card number
+  Serial.println("Enter card number (1-5):");
+  Serial.readString();
+  while (!Serial.available()); // Wait for user input
+  int cardNumber = Serial.parseInt();
+  Serial.println("ok");
+  // Check if card number is within valid range
+  if (cardNumber < 1 || cardNumber > NUM_TAG_LOCATIONS) {
+    Serial.println("Invalid card number.");
+    return;
+  }
+
+  // Clear EEPROM locations corresponding to the card number
+  for (int i = (cardNumber - 1) * TAG_SIZE; i < cardNumber * TAG_SIZE; i++) {
+    EEPROM.write(i, 0);
+  }
+
+  // Prompt user to show RFID tag
+  Serial1.readString();
+  Serial.println("Please show your RFID tag (12 digits):");
+  while (!Serial1.available()); // Wait for tag to be shown
+  String tag = Serial1.readStringUntil('\n');
+  tag.trim(); // Remove leading/trailing whitespaces
+
+  // Check if the tag length is correct
+  if (tag.length() != TAG_SIZE) {
+    Serial.println("Invalid RFID tag. Please enter 12 digits.");
+    return;
+  }
+
+  // Write RFID tag to EEPROM
+  writeRFIDTagToEEPROM(cardNumber, tag);
+  Serial.println("RFID tag stored successfully.");
+}
+
+// Function to read RFID tag from EEPROM at specified location
+void read_card_location(int location)
+{
+  // Check if location is within valid range
+  if (location < 1 || location > NUM_TAG_LOCATIONS)
+  {
+    Serial.println("Invalid location.");
+    return;
+  }
+
+  // Read RFID tag from EEPROM
+  Serial.print("Location ");
+  Serial.print(location);
+  Serial.print(": ");
+  tag = "";
+  for (int i = (location - 1) * TAG_SIZE; i < location * TAG_SIZE; i++) {
+    char c = EEPROM.read(i);
+    tag += c;
+    //Serial.print(c);
+
+  }
+  Serial.println(tag);
+  return tag;
+}
+
+
+void setup()
+{
+  lcd.init(); lcd.backlight();
+  Serial.begin(9600); // Main Serial for user input
+  Serial1.begin(9600); // Serial1 for RFID reader
+  Serial.println("Welcome");
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("WELCOME");
+  pinMode(buz, OUTPUT);
+  digitalWrite(buz, HIGH); delay(1000); digitalWrite(buz, LOW);
+
+
+  // Motor pins as outputs
+  pinMode(motor1Pin1, OUTPUT);
+  pinMode(motor1Pin2, OUTPUT);
+  pinMode(motor2Pin1, OUTPUT);
+  pinMode(motor2Pin2, OUTPUT);
+
+  // Sensor pins as inputs
+  pinMode(sensorPin1, INPUT);
+  pinMode(sensorPin2, INPUT);
+  pinMode(sensorPin3, INPUT);
+  pinMode(sensorPin4, INPUT);
+  pinMode(sensorPin5, INPUT);
+
+  //read_card_location(1);
+}
+
+int new_tag_st = 0;
+int robo_start = 0;
+int sensorValue1;
+int sensorValue2;
+int sensorValue3;
+int sensorValue4;
+int sensorValue5;
+void loop()
+{
+  if (Serial.available() > 0)
+  {
+    char input = Serial.read();
+    if (input == 'u')
+    {
+      store_card();
+    }
+    if (input != 'u')
+    {
+      int location = atoi(&input);
+      read_card_location(location);
+    }
+  }
+
+  char customKey = customKeypad.getKey();
+  if (customKey)
+  {
+    int tag_number = atoi(&customKey);
+    read_card_location(tag_number);
+    robo_start = 1;
+    lcd.clear();
+  }
+  if (robo_start == 1)
+  {
+    
+    if (Serial1.available() > 0)
+    {
+      Stop();
+      String new_tag = Serial1.readStringUntil('\n');
+      if (new_tag == tag && new_tag_st == 0)
+      {
+        new_tag_st = 1;
+        Serial.println("Reached stopped");
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Reached Location");
+        Stop();  digitalWrite(buz, HIGH); delay(2000); digitalWrite(buz, LOW);
+        while (1)
+        {
+          char customKey = customKeypad.getKey();
+          if (customKey)
+          {
+            if (customKey == '*')
+              break;
+          }
+        }
+        go_home();
+      }
+      if (new_tag == "18008836BD1B")
+      {
+        new_tag_st = 0;
+        digitalWrite(buz, HIGH);
+        Stop();
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Reached Home");
+        Serial.println("Reached");
+        robo_start = 0;
+        delay(2000);
+        digitalWrite(buz, LOW);
+      }
+    }
+    else
+    {
+        lcd.setCursor(0, 0);
+        lcd.print("Robot moving..");
+        follow_line(); 
+        digitalWrite(buz, LOW);
+    }
+  }
+  else
+  {
+    Stop();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Select Location"); delay(300);
+  }
+}
+
+
+void follow_line()
+{
+  read_sensors();
+  int leftSpeed = baseSpeed;
+  int rightSpeed = baseSpeed;
+
+  if (sensorValue3 == HIGH)
+  {
+    leftSpeed = baseSpeed;
+    rightSpeed = baseSpeed;
+    // Line detected in the center
+    // Keep moving forward at base speed
+  }
+  else if (sensorValue2 == HIGH)
+  {
+    ///rightSpeed -= turnSpeed;
+    rightSpeed = 0;
+  }
+  else if (sensorValue4 == HIGH)
+  {
+    //leftSpeed -= turnSpeed;
+    leftSpeed = 0;
+  }
+  else if (sensorValue1 == HIGH)
+  {
+    rightSpeed = 0;
+  }
+  else if (sensorValue5 == HIGH)
+  {
+    leftSpeed = 0;
+  }
+  else if (sensorValue1 == HIGH && sensorValue2 == HIGH && sensorValue3 == HIGH && sensorValue4 == HIGH && sensorValue5 == HIGH)
+  {
+    leftSpeed = 0;
+    rightSpeed = 0;
+  }
+  analogWrite(motor1Pin1, leftSpeed);
+  analogWrite(motor1Pin2, 0);
+  analogWrite(motor2Pin1, rightSpeed);
+  analogWrite(motor2Pin2, 0);
+
+  //  Serial.print("Left Speed: ");
+  //  Serial.print(leftSpeed);
+  //  Serial.print(" Right Speed: ");
+  //  Serial.println(rightSpeed);
+
+  //delay(); // Adjust delay as needed
+}
+
+void Stop()
+{
+  analogWrite(motor1Pin1, 0);
+  analogWrite(motor1Pin2, 0);
+  analogWrite(motor2Pin1, 0);
+  analogWrite(motor2Pin2, 0);
+}
+
+void go_home()
+{
+  analogWrite(motor1Pin1, 0);
+  analogWrite(motor1Pin2, 0);
+  analogWrite(motor2Pin1, 150);
+  analogWrite(motor2Pin2, 0); delay(1000);
+  read_sensors();
+  while (sensorValue2 != HIGH)
+  {
+
+    read_sensors();
+    analogWrite(motor1Pin1, 0);
+    analogWrite(motor1Pin2, 150);
+    analogWrite(motor2Pin1, 150);
+    analogWrite(motor2Pin2, 0);
+  }
+  Stop(); delay(1000);
+}
+
+void read_sensors()
+{
+  sensorValue1 = digitalRead(sensorPin1);
+  sensorValue2 = digitalRead(sensorPin2);
+  sensorValue3 = digitalRead(sensorPin3);
+  sensorValue4 = digitalRead(sensorPin4);
+  sensorValue5 = digitalRead(sensorPin5);
+}
